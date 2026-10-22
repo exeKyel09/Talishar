@@ -31,6 +31,7 @@ services:
     command: apache2-foreground
     ports:
       - "8080:80"
+      - "5173:5173" # Frontend dev server (frontend service shares this network)
     depends_on:
       - redis
       - mysql-server
@@ -48,6 +49,25 @@ services:
       DOMAIN: "localhost"
       METAFY_CLIENT_ID: "4gIw_YYtamUjZ0yadyy3gYaL_BJkaRnPOa5SKCLbEPI"
       METAFY_LOGIN_CLIENT_ID: "2gAjeLUQxKdjOUaMP63CyoVHqedqkjQLa-WntE6UHss"
+  frontend:
+    image: node:24.16.0-bookworm # Matches Talishar-FE/.nvmrc
+    restart: always
+    working_dir: /app
+    volumes:
+      - "../Talishar-FE:/app"
+      - "frontend-node-modules:/app/node_modules" # Linux node_modules, kept apart from the host's Windows/macOS ones
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    # Shares web-server's network so the Vite proxy calls the backend as "localhost",
+    # which the backend relies on (SERVER_NAME === 'localhost') to detect local dev.
+    # Port 5173 is therefore published on web-server.
+    network_mode: "service:web-server"
+    depends_on:
+      - web-server
+    environment:
+      VITE_BACKEND_URL: "localhost"
+      VITE_BACKEND_PORT: "80"
+      VITE_BACKEND_DIRECTORY: "game"
+      CHOKIDAR_USEPOLLING: "true" # Hot reload through bind mounts on Windows/macOS
   mysql-server:
     image: mysql:lts
     restart: always
@@ -77,3 +97,4 @@ services:
       - "6382:6379"
 volumes:
   mysql-data:
+  frontend-node-modules:
