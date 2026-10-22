@@ -1,0 +1,33 @@
+# Caddy config for docker-compose.pi.yml: HTTPS (automatic Let's Encrypt certificate),
+# the built frontend, and the backend API on the same origin.
+#
+# The frontend owns /game/play, /game/lobby... so the API is served under /api/ and
+# rewritten to the backend's /game/, like the Vite dev proxy does (Talishar-FE/vite.config.mts).
+
+{$SITE_ADDRESS} {
+	handle_path /api/* {
+		rewrite * /game{path}
+		reverse_proxy web-server:80
+	}
+
+	@backend path /APIs/* /AccountFiles/*
+	handle @backend {
+		rewrite * /game{path}
+		reverse_proxy web-server:80
+	}
+
+	handle /game/AccountFiles/* {
+		reverse_proxy web-server:80
+	}
+
+	handle {
+		# Compression only here: compressing the backend's SSE stream would buffer events
+		encode zstd gzip
+		root * /srv
+		@immutable path /assets/*
+		header @immutable Cache-Control "public, max-age=31536000, immutable"
+		header /index.html Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -1,19 +1,28 @@
 # Raspberry Pi 5 (ARM64) override for docker-compose.yml.
 #
+# Serves Talishar over HTTPS at https://<PI_HOSTNAME>: Caddy gets a Let's Encrypt certificate,
+# serves a production build of Talishar-FE and forwards /api/ to the backend.
+#
 # Usage, on the Pi, with Talishar, Talishar-FE and CardImages cloned side by side:
 #   cp -n HostFiles/RedirectorTemplate.php HostFiles/Redirector.php
 #   docker compose -f docker-compose.yml -f docker-compose.pi.yml up -d --build
-# Then open http://<PI_HOSTNAME>:5173 from any machine on the network.
+# Requirements for the certificate: PI_HOSTNAME resolves to your public IP, and the router
+# forwards ports 80 and 443 to the Pi.
 #
 # Settings, read from the shell or from a .env file next to this file:
-#   PI_HOSTNAME          Name used to reach the Pi (default: raspberrypi.local).
-#                        Auth cookies are scoped to it, so always open the site with this exact name.
+#   PI_HOSTNAME          Public name of the Pi (default: raspberrypi.local, which gets a
+#                        self-signed certificate). Auth cookies are scoped to it, so always
+#                        open the site with this exact name.
 #   MYSQL_ROOT_PASSWORD  MySQL root password (default: secret). Only applied when
 #                        mysql-data/ is created; changing it later requires resetting the database.
-#   BACKEND_PORT         Host port for direct backend access (default: 8081, as 8080 is often
-#                        taken on a Pi). The frontend does not use it: it reaches the backend internally.
+#   BACKEND_PORT         Host port for direct backend access on the LAN (default: 8081, as 8080 is
+#                        often taken on a Pi). Not used by the site, which goes through Caddy.
 #   PUID / PGID          Owner of the cloned files on the Pi (default: 1000, the first user; check with `id`).
 #                        Apache runs as this user so PHP can write Games/ and HostFiles/ on the bind mount.
+#   FORCE_FRONTEND_BUILD Set to 1 to rebuild the frontend even if Talishar-FE's commit did not change.
+#
+# After pulling Talishar-FE changes, rebuild the frontend with:
+#   docker compose -f docker-compose.yml -f docker-compose.pi.yml up -d frontend
 #
 # phpMyAdmin is disabled; start it when needed with: --profile tools
 
@@ -24,10 +33,10 @@ services:
         PHP_INI: production
     ports: !override
       - "${BACKEND_PORT:-8081}:80"
-      - "5173:5173" # Frontend dev server (frontend service shares this network)
     volumes:
       # Replaces the Xdebug ini so the extension is not loaded at all
       - "./docker/docker-php-ext-xdebug.disabled.ini:/usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini"
+      - "./docker/apache-forwarded-https.conf:/etc/apache2/conf-enabled/zz-talishar-forwarded-https.conf"
     environment:
       DOMAIN: "${PI_HOSTNAME:-raspberrypi.local}"
       MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-secret}"
@@ -35,12 +44,39 @@ services:
       APACHE_RUN_USER: "#${PUID:-1000}"
       APACHE_RUN_GROUP: "#${PGID:-1000}"
   frontend:
+    # One-shot production build into the frontend-dist volume, served by Caddy
+    restart: "no"
     volumes:
-      - "./docker/vite.pi.config.mts:/opt/vite.pi.config.mts:ro"
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173 --config /opt/vite.pi.config.mts"
+      - "./docker/build-frontend.sh:/opt/build-frontend.sh:ro"
+      - "frontend-dist:/dist"
+    command: sh /opt/build-frontend.sh
     environment:
-      PI_HOSTNAME: "${PI_HOSTNAME:-raspberrypi.local}"
-      CHOKIDAR_USEPOLLING: "false" # Native file watching works on Linux bind mounts
+      # Production builds call https://<VITE_BACKEND_URL>/<VITE_BACKEND_DIRECTORY>/ (Talishar-FE/src/appConstants.ts)
+      VITE_BACKEND_URL: "${PI_HOSTNAME:-raspberrypi.local}"
+      VITE_BACKEND_DIRECTORY: "api"
+      VITE_ADS_ENABLED: "false"
+      VITE_IN_GAME_ADS_ENABLED: "false"
+      FORCE_FRONTEND_BUILD: "${FORCE_FRONTEND_BUILD:-0}"
+      NODE_OPTIONS: "--max-old-space-size=4096"
+  caddy:
+    image: caddy:2.10
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - "./docker/Caddyfile.pi:/etc/caddy/Caddyfile:ro"
+      - "frontend-dist:/srv:ro"
+      - "caddy-data:/data" # Certificates
+      - "caddy-config:/config"
+    environment:
+      SITE_ADDRESS: "${PI_HOSTNAME:-raspberrypi.local}"
+    depends_on:
+      frontend:
+        condition: service_completed_successfully
+      web-server:
+        condition: service_started
   mysql-server:
     environment:
       MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-secret}"
@@ -51,3 +87,8 @@ services:
   redis:
     restart: always
     ports: !reset [] # Only reachable from the other containers
+
+volumes:
+  frontend-dist:
+  caddy-data:
+  caddy-config:
