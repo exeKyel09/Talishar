@@ -10,6 +10,8 @@
 #                        Auth cookies are scoped to it, so always open the site with this exact name.
 #   MYSQL_ROOT_PASSWORD  MySQL root password (default: secret). Only applied when
 #                        mysql-data/ is created; changing it later requires resetting the database.
+#   BACKEND_PORT         Host port for direct backend access (default: 8081, as 8080 is often
+#                        taken on a Pi). The frontend does not use it: it reaches the backend internally.
 #
 # phpMyAdmin is disabled; start it when needed with: --profile tools
 
@@ -18,6 +20,9 @@ services:
     build:
       args:
         PHP_INI: production
+    ports: !override
+      - "${BACKEND_PORT:-8081}:80"
+      - "5173:5173" # Frontend dev server (frontend service shares this network)
     volumes:
       # Replaces the Xdebug ini so the extension is not loaded at all
       - "./docker/docker-php-ext-xdebug.disabled.ini:/usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini"
