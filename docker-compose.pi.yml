@@ -12,6 +12,8 @@
 #                        mysql-data/ is created; changing it later requires resetting the database.
 #   BACKEND_PORT         Host port for direct backend access (default: 8081, as 8080 is often
 #                        taken on a Pi). The frontend does not use it: it reaches the backend internally.
+#   PUID / PGID          Owner of the cloned files on the Pi (default: 1000, the first user; check with `id`).
+#                        Apache runs as this user so PHP can write Games/ and HostFiles/ on the bind mount.
 #
 # phpMyAdmin is disabled; start it when needed with: --profile tools
 
@@ -29,6 +31,9 @@ services:
     environment:
       DOMAIN: "${PI_HOSTNAME:-raspberrypi.local}"
       MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-secret}"
+      # On Linux the bind-mounted files keep the host owner, which www-data cannot write to
+      APACHE_RUN_USER: "#${PUID:-1000}"
+      APACHE_RUN_GROUP: "#${PGID:-1000}"
   frontend:
     volumes:
       - "./docker/vite.pi.config.mts:/opt/vite.pi.config.mts:ro"
