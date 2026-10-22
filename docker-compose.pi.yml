@@ -1,0 +1,43 @@
+# Raspberry Pi 5 (ARM64) override for docker-compose.yml.
+#
+# Usage, on the Pi, with Talishar, Talishar-FE and CardImages cloned side by side:
+#   cp -n HostFiles/RedirectorTemplate.php HostFiles/Redirector.php
+#   docker compose -f docker-compose.yml -f docker-compose.pi.yml up -d --build
+# Then open http://<PI_HOSTNAME>:5173 from any machine on the network.
+#
+# Settings, read from the shell or from a .env file next to this file:
+#   PI_HOSTNAME          Name used to reach the Pi (default: raspberrypi.local).
+#                        Auth cookies are scoped to it, so always open the site with this exact name.
+#   MYSQL_ROOT_PASSWORD  MySQL root password (default: secret). Only applied when
+#                        mysql-data/ is created; changing it later requires resetting the database.
+#
+# phpMyAdmin is disabled; start it when needed with: --profile tools
+
+services:
+  web-server:
+    build:
+      args:
+        PHP_INI: production
+    volumes:
+      # Replaces the Xdebug ini so the extension is not loaded at all
+      - "./docker/docker-php-ext-xdebug.disabled.ini:/usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini"
+    environment:
+      DOMAIN: "${PI_HOSTNAME:-raspberrypi.local}"
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-secret}"
+  frontend:
+    volumes:
+      - "./docker/vite.pi.config.mts:/opt/vite.pi.config.mts:ro"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173 --config /opt/vite.pi.config.mts"
+    environment:
+      PI_HOSTNAME: "${PI_HOSTNAME:-raspberrypi.local}"
+      CHOKIDAR_USEPOLLING: "false" # Native file watching works on Linux bind mounts
+  mysql-server:
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-secret}"
+  phpmyadmin:
+    profiles: ["tools"]
+    environment:
+      PMA_PASSWORD: "${MYSQL_ROOT_PASSWORD:-secret}"
+  redis:
+    restart: always
+    ports: !reset [] # Only reachable from the other containers
